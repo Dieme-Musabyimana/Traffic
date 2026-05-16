@@ -68,6 +68,8 @@
             justify-content: center;
             align-items: center;
             min-height: 120px;
+            text-decoration: none; /* For anchor cards */
+            color: inherit; /* For anchor cards */
         }
         .card:hover {
             transform: translateY(-5px);
@@ -119,7 +121,7 @@
             transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.1s ease;
             color: #0056b3;
         }
-        .options-container button:hover {
+        .options-container button:hover:not(:disabled) {
             background-color: #d0efff;
             border-color: #7bc8f6;
             transform: translateY(-2px);
@@ -176,25 +178,86 @@
             background-color: #007bff;
             color: white;
         }
-        #submitAnswerBtn:hover {
+        #submitAnswerBtn:hover:not(:disabled) {
             background-color: #0056b3;
             transform: translateY(-2px);
         }
-        #nextQuestionBtn {
+        #nextQuestionBtn, #backQuestionBtn {
             background-color: #6c757d;
             color: white;
         }
-        #nextQuestionBtn:hover {
+        #nextQuestionBtn:hover:not(:disabled), #backQuestionBtn:hover:not(:disabled) {
             background-color: #5a6268;
             transform: translateY(-2px);
         }
-        #nextQuestionBtn:disabled {
+        #finishExamBtn {
+            background-color: #28a745;
+            color: white;
+        }
+        #finishExamBtn:hover:not(:disabled) {
+            background-color: #218838;
+            transform: translateY(-2px);
+        }
+        button:disabled {
             background-color: #cccccc;
             cursor: not-allowed;
         }
-        #submitAnswerBtn:disabled {
-            background-color: #cccccc;
-            cursor: not-allowed;
+        .exam-set-selection {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+            padding: 20px;
+            background-color: #e3f2fd;
+            border-radius: 10px;
+            box-shadow: inset 0 2px 5px rgba(0,0,0,0.05);
+        }
+        .exam-set-selection button {
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #90caf9;
+            background-color: #bbdefb;
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #1565c0;
+            cursor: pointer;
+            transition: background-color 0.2s ease, transform 0.1s ease;
+        }
+        .exam-set-selection button:hover {
+            background-color: #90caf9;
+            transform: translateY(-2px);
+        }
+        .hidden {
+            display: none;
+        }
+        .score-display {
+            margin-top: 30px;
+            padding: 25px;
+            background-color: #e8f5e9;
+            border-radius: 10px;
+            text-align: center;
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #2e7d32;
+            border: 2px solid #4caf50;
+        }
+        .score-display.fail {
+            background-color: #ffebee;
+            color: #c62828;
+            border-color: #d32f2f;
+        }
+        .score-display button {
+            margin-top: 20px;
+            padding: 10px 20px;
+            font-size: 1em;
+            cursor: pointer;
+            border-radius: 5px;
+            border: none;
+            background-color: #007bff;
+            color: white;
+        }
+        .score-display button:hover {
+            background-color: #0056b3;
         }
     </style>
 </head>
@@ -217,16 +280,24 @@
 
         <div class="exam-section">
             <h2 id="examTitle">Practice Exam</h2>
-            <div id="examContent">
+            <div id="examSetSelection" class="exam-set-selection hidden">
+                <!-- Exam set buttons will be loaded here -->
+            </div>
+            <div id="examContent" class="hidden">
                 <p class="question-text" id="questionText">Loading question...</p>
                 <div class="options-container" id="optionsContainer">
                     <!-- Options will be loaded here by JavaScript -->
                 </div>
                 <div id="feedback" class="feedback" style="display: none;"></div>
                 <div class="exam-actions">
+                    <button id="backQuestionBtn" disabled>Back</button>
                     <button id="submitAnswerBtn" disabled>Submit Answer</button>
                     <button id="nextQuestionBtn" disabled>Next Question</button>
+                    <button id="finishExamBtn" class="hidden">Finish Exam</button>
                 </div>
+            </div>
+            <div id="examResult" class="score-display hidden">
+                <!-- Exam results will be displayed here -->
             </div>
         </div>
     </div>
@@ -234,20 +305,30 @@
     <script>
         const API_BASE_URL = '/api';
         let currentLang = 'rw';
-        let currentQuestion = null;
+        let currentExamSetId = null;
+        let currentQuestionIndex = 0; // 0-based index within the current 20-question set
+        let currentExamQuestions = []; // The 20 questions for the current set
         let selectedOptionId = null;
-        let allQuestionIds = [1, 2, 3, 4]; // Hardcoded for demo, in a real app this would come from an API
+
+        // New state variables for scoring and navigation
+        const answeredQuestionsMap = new Map(); // Stores { questionId: { chosenOptionId, isCorrect, correctOptionId } }
+        let userScore = 0;
 
         const elements = {
             languageSelect: document.getElementById('languageSelect'),
             langLabel: document.getElementById('langLabel'),
             dashboardCards: document.getElementById('dashboardCards'),
             examTitle: document.getElementById('examTitle'),
+            examSetSelection: document.getElementById('examSetSelection'),
+            examContent: document.getElementById('examContent'),
             questionText: document.getElementById('questionText'),
             optionsContainer: document.getElementById('optionsContainer'),
             feedback: document.getElementById('feedback'),
+            backQuestionBtn: document.getElementById('backQuestionBtn'),
             submitAnswerBtn: document.getElementById('submitAnswerBtn'),
-            nextQuestionBtn: document.getElementById('nextQuestionBtn')
+            nextQuestionBtn: document.getElementById('nextQuestionBtn'),
+            finishExamBtn: document.getElementById('finishExamBtn'),
+            examResult: document.getElementById('examResult')
         };
 
         const locales = { // Frontend copy of locales for instant UI updates
@@ -261,10 +342,18 @@
                 ],
                 exam: {
                     title: 'Practice Exam',
+                    selectSet: 'Select an Exam Set',
                     submit: 'Submit Answer',
                     correct: 'Correct!',
                     incorrect: 'Incorrect. Try again!',
-                    nextQuestion: 'Next Question'
+                    nextQuestion: 'Next Question',
+                    backQuestion: 'Back',
+                    finishExam: 'Finish Exam',
+                    score: 'Score',
+                    outOf: 'out of',
+                    pass: 'Congratulations! You passed!',
+                    fail: 'Keep practicing! You can do it!',
+                    backToSets: 'Back to Exam Sets'
                 },
                 language: 'Language'
             },
@@ -278,10 +367,18 @@
                 ],
                 exam: {
                     title: 'Ikizamini cy\'imyitozo',
+                    selectSet: 'Hitamo Ikizamini',
                     submit: 'Emeza Igisubizo',
                     correct: 'Nibyo!',
                     incorrect: 'Si byo. Ongera ugerageze!',
-                    nextQuestion: 'Ikibazo gikurikira'
+                    nextQuestion: 'Ikibazo gikurikira',
+                    backQuestion: 'Subira inyuma',
+                    finishExam: 'Soreza Ikizamini',
+                    score: 'Amanota',
+                    outOf: 'ku',
+                    pass: 'Urakoze! Waratsinze!',
+                    fail: 'Komeza witoze! Urabishobora!',
+                    backToSets: 'Subira ku Bizamini'
                 },
                 language: 'Ururimi'
             },
@@ -295,10 +392,18 @@
                 ],
                 exam: {
                     title: 'Examen Pratique',
+                    selectSet: 'Sélectionner un ensemble d\'examen',
                     submit: 'Soumettre la réponse',
                     correct: 'Correct!',
                     incorrect: 'Incorrect. Réessayez!',
-                    nextQuestion: 'Question suivante'
+                    nextQuestion: 'Question suivante',
+                    backQuestion: 'Précédent',
+                    finishExam: 'Terminer l\'examen',
+                    score: 'Score',
+                    outOf: 'sur',
+                    pass: 'Félicitations! Vous avez réussi!',
+                    fail: 'Continuez à pratiquer! Vous pouvez le faire!',
+                    backToSets: 'Retour aux ensembles d\'examen'
                 },
                 language: 'Langue'
             }
@@ -306,49 +411,125 @@
 
         async function fetchDashboardCards(lang) {
             try {
-                // Using frontend locales for instant update, but API call is also possible
-                // const response = await fetch(`${API_BASE_URL}/dashboard?lang=${lang}`);
-                // const cards = await response.json();
-                const cards = locales[lang].dashboardCards; // Use frontend locales for dashboard
-                renderDashboardCards(cards);
+                const cards = locales[lang].dashboardCards;
+                elements.dashboardCards.innerHTML = cards.map(card => {
+                    if (card.id === 'gazette') {
+                        return `
+                            <a href="${API_BASE_URL}/gazette" target="_blank" class="card">
+                                <h3>${card.name}</h3>
+                                <p>${card.description}</p>
+                            </a>
+                        `;
+                    } else if (card.id === 'exams') {
+                        return `
+                            <div class="card" data-card-id="${card.id}">
+                                <h3>${card.name}</h3>
+                                <p>${card.description}</p>
+                            </div>
+                        `;
+                    }
+                    else {
+                        return `
+                            <div class="card">
+                                <h3>${card.name}</h3>
+                                <p>${card.description}</p>
+                            </div>
+                        `;
+                    }
+                }).join('');
+
+                // Add event listener for the 'Exams' card
+                const examsCard = document.querySelector('.card[data-card-id="exams"]');
+                if (examsCard) {
+                    examsCard.addEventListener('click', fetchExamSets);
+                }
+
             } catch (error) {
                 console.error('Error fetching dashboard cards:', error);
                 elements.dashboardCards.innerHTML = `<p style="color: red;">Failed to load dashboard. Please try again.</p>`;
             }
         }
 
-        function renderDashboardCards(cards) {
-            elements.dashboardCards.innerHTML = cards.map(card => `
-                <div class="card">
-                    <h3>${card.name}</h3>
-                    <p>${card.description}</p>
-                </div>
-            `).join('');
-        }
+        async function fetchExamSets() {
+            elements.dashboardCards.classList.add('hidden'); // Hide dashboard cards
+            elements.examContent.classList.add('hidden'); // Hide exam content
+            elements.examResult.classList.add('hidden'); // Hide exam result
+            elements.examSetSelection.classList.remove('hidden'); // Show exam set selection
+            elements.examTitle.textContent = locales[currentLang].exam.selectSet;
 
-        async function fetchRandomQuestion(lang) {
-            const randomQuestionId = allQuestionIds[Math.floor(Math.random() * allQuestionIds.length)];
             try {
-                const response = await fetch(`${API_BASE_URL}/exam/question/${randomQuestionId}?lang=${lang}`);
+                const response = await fetch(`${API_BASE_URL}/exams/list`);
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
-                const question = await response.json();
-                currentQuestion = question;
-                renderQuestion(question, lang);
-                resetExamState();
+                const examSets = await response.json();
+                renderExamSetSelection(examSets);
             } catch (error) {
-                console.error('Error fetching question:', error);
-                elements.questionText.textContent = `Failed to load question. (${error.message})`;
-                elements.optionsContainer.innerHTML = '';
-                elements.submitAnswerBtn.disabled = true;
-                elements.nextQuestionBtn.disabled = true;
+                console.error('Error fetching exam sets:', error);
+                elements.examSetSelection.innerHTML = `<p style="color: red;">Failed to load exam sets. (${error.message})</p>`;
             }
         }
 
-        function renderQuestion(question, lang) {
-            elements.questionText.textContent = question.text;
+        function renderExamSetSelection(examSets) {
+            elements.examSetSelection.innerHTML = '';
+            examSets.forEach((setName, index) => {
+                const button = document.createElement('button');
+                button.textContent = setName;
+                button.addEventListener('click', () => loadExamSet(index + 1)); // Set IDs are 1-based
+                elements.examSetSelection.appendChild(button);
+            });
+        }
+
+        async function loadExamSet(setId) {
+            currentExamSetId = setId;
+            currentQuestionIndex = 0; // Start from the first question of the set
+            answeredQuestionsMap.clear(); // Clear previous session's answers
+            userScore = 0; // Reset score
+
+            elements.examSetSelection.classList.add('hidden'); // Hide exam set selection
+            elements.examResult.classList.add('hidden'); // Hide exam result
+            elements.examContent.classList.remove('hidden'); // Show exam content
+            elements.examTitle.textContent = locales[currentLang].exam.title;
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/exam/set/${setId}?lang=${currentLang}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                currentExamQuestions = await response.json();
+                if (currentExamQuestions.length > 0) {
+                    displayQuestion(); // Display the first question
+                } else {
+                    elements.questionText.textContent = `No questions found for Exam Set ${setId}.`;
+                    elements.optionsContainer.innerHTML = '';
+                    elements.submitAnswerBtn.disabled = true;
+                    elements.nextQuestionBtn.disabled = true;
+                    elements.backQuestionBtn.disabled = true;
+                    elements.finishExamBtn.classList.add('hidden');
+                }
+            } catch (error) {
+                console.error(`Error loading exam set ${setId}:`, error);
+                elements.questionText.textContent = `Failed to load exam set. (${error.message})`;
+                elements.optionsContainer.innerHTML = '';
+                elements.submitAnswerBtn.disabled = true;
+                elements.nextQuestionBtn.disabled = true;
+                elements.backQuestionBtn.disabled = true;
+                elements.finishExamBtn.classList.add('hidden');
+            }
+        }
+
+        function displayQuestion() {
+            resetQuestionUI(); // Reset UI elements for the new question
+            const question = currentExamQuestions[currentQuestionIndex];
+            if (!question) {
+                console.error("Question not found at index:", currentQuestionIndex);
+                return;
+            }
+            currentQuestion = question; // Set currentQuestion for submitAnswer
+
+            elements.questionText.textContent = `Q${currentQuestionIndex + 1}. ${question.text}`;
             elements.optionsContainer.innerHTML = '';
+
             question.options.forEach(option => {
                 const button = document.createElement('button');
                 button.textContent = option.text;
@@ -356,10 +537,37 @@
                 button.addEventListener('click', () => selectOption(option.id, button));
                 elements.optionsContainer.appendChild(button);
             });
-            elements.submitAnswerBtn.textContent = locales[lang].exam.submit;
-            elements.nextQuestionBtn.textContent = locales[lang].exam.nextQuestion;
-            elements.examTitle.textContent = locales[lang].exam.title;
-            elements.langLabel.textContent = locales[lang].language + ':';
+
+            // Update button texts
+            elements.submitAnswerBtn.textContent = locales[currentLang].exam.submit;
+            elements.backQuestionBtn.textContent = locales[currentLang].exam.backQuestion;
+            elements.nextQuestionBtn.textContent = locales[currentLang].exam.nextQuestion;
+            elements.finishExamBtn.textContent = locales[currentLang].exam.finishExam;
+
+            // Handle navigation button states
+            elements.backQuestionBtn.disabled = currentQuestionIndex === 0;
+            elements.nextQuestionBtn.disabled = currentQuestionIndex === currentExamQuestions.length - 1;
+
+            if (currentQuestionIndex === currentExamQuestions.length - 1) {
+                elements.finishExamBtn.classList.remove('hidden');
+                elements.nextQuestionBtn.classList.add('hidden');
+            } else {
+                elements.finishExamBtn.classList.add('hidden');
+                elements.nextQuestionBtn.classList.remove('hidden');
+            }
+
+            // If question was already answered, restore state
+            if (answeredQuestionsMap.has(question.id)) {
+                const { chosenOptionId, isCorrect, correctOptionId } = answeredQuestionsMap.get(question.id);
+                selectedOptionId = chosenOptionId; // Restore selection
+                markOptions(isCorrect, correctOptionId, chosenOptionId); // Re-apply feedback
+                elements.submitAnswerBtn.disabled = true; // Already answered
+                elements.feedback.style.display = 'block';
+                elements.feedback.textContent = isCorrect ? locales[currentLang].exam.correct : locales[currentLang].exam.incorrect;
+                elements.feedback.className = `feedback ${isCorrect ? 'correct' : 'incorrect'}`;
+            } else {
+                elements.submitAnswerBtn.disabled = true; // No option selected yet
+            }
         }
 
         function selectOption(optionId, buttonElement) {
@@ -370,35 +578,50 @@
             });
             // Add 'selected' class to the clicked option
             buttonElement.classList.add('selected');
-            elements.submitAnswerBtn.disabled = false;
+            elements.submitAnswerBtn.disabled = false; // Enable submit button
         }
 
         async function submitAnswer() {
-            if (currentQuestion && selectedOptionId !== null) {
-                elements.submitAnswerBtn.disabled = true; // Prevent multiple submissions
-                try {
-                    const response = await fetch(`${API_BASE_URL}/exam/verify`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            questionId: currentQuestion.id,
-                            chosenOptionId: selectedOptionId,
-                            lang: currentLang
-                        })
-                    });
-                    const result = await response.json();
-                    displayFeedback(result.correct, result.explanation);
-                    markOptions(result.correct);
-                    elements.nextQuestionBtn.disabled = false;
-                } catch (error) {
-                    console.error('Error verifying answer:', error);
-                    elements.feedback.textContent = 'Error verifying answer.';
-                    elements.feedback.className = 'feedback incorrect';
-                    elements.feedback.style.display = 'block';
-                    elements.submitAnswerBtn.disabled = false; // Re-enable if error
+            if (!currentQuestion || selectedOptionId === null) {
+                return; // Should not happen if button is disabled correctly
+            }
+
+            elements.submitAnswerBtn.disabled = true; // Prevent multiple submissions
+            try {
+                const response = await fetch(`${API_BASE_URL}/exam/verify`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        questionId: currentQuestion.id,
+                        chosenOptionId: selectedOptionId,
+                        lang: currentLang
+                    })
+                });
+                const result = await response.json(); // { correct: true/false, explanation: "...", correctOptionId: X }
+
+                // Store answer and correctness in the map
+                answeredQuestionsMap.set(currentQuestion.id, {
+                    chosenOptionId: selectedOptionId,
+                    isCorrect: result.correct,
+                    correctOptionId: result.correctOptionId
+                });
+
+                // Update score if correct and not already scored
+                if (result.correct) {
+                    userScore++;
                 }
+
+                displayFeedback(result.correct, result.explanation);
+                markOptions(result.correct, result.correctOptionId, selectedOptionId);
+
+            } catch (error) {
+                console.error('Error verifying answer:', error);
+                elements.feedback.textContent = 'Error verifying answer.';
+                elements.feedback.className = 'feedback incorrect';
+                elements.feedback.style.display = 'block';
+                elements.submitAnswerBtn.disabled = false; // Re-enable if error
             }
         }
 
@@ -408,57 +631,84 @@
             elements.feedback.style.display = 'block';
         }
 
-        function markOptions(isCorrect) {
-            document.querySelectorAll('.options-container button').forEach(async btn => {
+        function markOptions(isCorrect, serverCorrectOptionId, userChosenOptionId) {
+            document.querySelectorAll('.options-container button').forEach(btn => {
                 btn.disabled = true; // Disable all options after submission
-
                 const optionId = parseInt(btn.dataset.optionId, 10);
 
-                // --- SIMULATING GETTING CORRECT ANSWER FOR DISPLAY ---
-                // In a real app, this would come from the server after an incorrect answer.
-                const mockCorrectAnswers = { // This would be from the server in a real app
-                    1: 3, // Q1: Danger ahead
-                    2: 2, // Q2: Vehicles already in the roundabout
-                    3: 1, // Q3: 40 km/h
-                    4: 2  // Q4: No passing
-                };
-
-                const serverCorrectOptionId = mockCorrectAnswers[currentQuestion.id]; // This should come from the server
-
                 if (optionId === serverCorrectOptionId) {
-                    btn.classList.add('correct');
-                } else if (optionId === selectedOptionId && !isCorrect) {
-                    btn.classList.add('incorrect');
+                    btn.classList.add('correct'); // Mark correct answer in green
+                } else if (optionId === userChosenOptionId && !isCorrect) {
+                    btn.classList.add('incorrect'); // Mark user's incorrect answer in red
                 }
             });
         }
 
-        function resetExamState() {
+        function resetQuestionUI() {
             selectedOptionId = null;
             elements.feedback.style.display = 'none';
             elements.feedback.className = 'feedback';
             elements.submitAnswerBtn.disabled = true;
-            elements.nextQuestionBtn.disabled = true;
             document.querySelectorAll('.options-container button').forEach(btn => {
                 btn.classList.remove('selected', 'correct', 'incorrect');
-                btn.disabled = false;
+                btn.disabled = false; // Re-enable for new question
             });
         }
+
+        function navigateQuestion(direction) {
+            if (direction === 'next') {
+                currentQuestionIndex++;
+            } else if (direction === 'back') {
+                currentQuestionIndex--;
+            }
+            displayQuestion();
+        }
+
+        function finishExam() {
+            elements.examContent.classList.add('hidden');
+            elements.examResult.classList.remove('hidden');
+
+            const totalQuestions = currentExamQuestions.length;
+            const scoreMessage = `${locales[currentLang].exam.score}: ${userScore} ${locales[currentLang].exam.outOf} ${totalQuestions}`;
+            const passThreshold = Math.ceil(totalQuestions * 0.7); // Example: 70% to pass
+            const passed = userScore >= passThreshold;
+
+            elements.examResult.innerHTML = `
+                <p>${scoreMessage}</p>
+                <p>${passed ? locales[currentLang].exam.pass : locales[currentLang].exam.fail}</p>
+                <button id="backToSetsBtn">${locales[currentLang].exam.backToSets}</button>
+            `;
+            elements.examResult.className = `score-display ${passed ? 'pass' : 'fail'}`;
+
+            document.getElementById('backToSetsBtn').addEventListener('click', fetchExamSets);
+        }
+
 
         // Event Listeners
         elements.languageSelect.addEventListener('change', (event) => {
             currentLang = event.target.value;
             fetchDashboardCards(currentLang);
-            fetchRandomQuestion(currentLang); // Reload question with new language
+            // If an exam is active, reload the current question/set in the new language
+            if (!elements.examSetSelection.classList.contains('hidden')) {
+                fetchExamSets(); // Reload exam set list in new language
+            } else if (!elements.examContent.classList.contains('hidden') && currentExamSetId) {
+                loadExamSet(currentExamSetId); // Reload current exam set in new language
+            } else if (!elements.examResult.classList.contains('hidden')) {
+                // If results are shown, re-render them in the new language
+                finishExam(); // Re-call to update text
+            }
+            elements.examTitle.textContent = locales[currentLang].exam.title; // Update title
+            elements.langLabel.textContent = locales[currentLang].language + ':'; // Update language label
         });
 
+        elements.backQuestionBtn.addEventListener('click', () => navigateQuestion('back'));
         elements.submitAnswerBtn.addEventListener('click', submitAnswer);
-        elements.nextQuestionBtn.addEventListener('click', () => fetchRandomQuestion(currentLang));
+        elements.nextQuestionBtn.addEventListener('click', () => navigateQuestion('next'));
+        elements.finishExamBtn.addEventListener('click', finishExam);
 
         // Initial load
         document.addEventListener('DOMContentLoaded', () => {
             fetchDashboardCards(currentLang);
-            fetchRandomQuestion(currentLang);
         });
     </script>
 </body>

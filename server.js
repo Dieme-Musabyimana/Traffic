@@ -20,6 +20,14 @@ app.use(express.static(path.join(__dirname, 'public'))); // Serve static files f
 // API Routes
 app.use('/api', routes);
 
+// Route to serve the PDF file
+app.get('/api/gazette', (req, res) => {
+  const pdfPath = path.join(__dirname, 'igazetiCODE DE LA ROUTE.pdf');
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'inline; filename="igazetiCODE DE LA ROUTE.pdf"');
+  res.sendFile(pdfPath);
+});
+
 // Catch-all for SPA routing (if using client-side routing)
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
